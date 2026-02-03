@@ -50,6 +50,23 @@ class PriceScraper:
         else:
             return self.proxy_rotator.get_next_proxy()
     
+    def _handle_proxy_failure(self, proxy: Optional[Dict[str, str]], 
+                             error_type: str, error: Exception, 
+                             attempt: int):
+        """
+        Handle proxy failure by marking it as failed and logging details.
+        
+        Args:
+            proxy: The proxy that failed
+            error_type: Type of error (e.g., 'Proxy', 'Timeout')
+            error: The exception that occurred
+            attempt: Current attempt number
+        """
+        proxy_info = proxy['http'] if proxy else 'No proxy'
+        print(f"{error_type} error on attempt {attempt + 1} with {proxy_info}: {error}")
+        if proxy:
+            self.proxy_rotator.mark_proxy_failed(proxy)
+    
     def fetch_page(self, url: str, delay: float = 1.0) -> Optional[requests.Response]:
         """
         Fetch a page with rotating IP addresses and retry logic.
@@ -61,6 +78,8 @@ class PriceScraper:
         Returns:
             Response object if successful, None otherwise
         """
+        proxy = None  # Initialize proxy variable for exception handlers
+        
         for attempt in range(self.retry_attempts):
             try:
                 # Add random delay to appear more human-like
@@ -89,25 +108,24 @@ class PriceScraper:
                     print(f"Successfully fetched: {url}")
                     return response
                 elif response.status_code == 403 or response.status_code == 429:
-                    print(f"Blocked (status {response.status_code}), rotating proxy...")
+                    proxy_info = proxy['http'] if proxy else 'No proxy'
+                    print(f"Blocked (status {response.status_code}) on attempt {attempt + 1} with {proxy_info}, rotating...")
                     if proxy:
                         self.proxy_rotator.mark_proxy_failed(proxy)
                     time.sleep(delay * 2)
                 else:
-                    print(f"Unexpected status code: {response.status_code}")
+                    print(f"Unexpected status code {response.status_code} on attempt {attempt + 1}")
                     
             except requests.exceptions.ProxyError as e:
-                print(f"Proxy error: {e}")
-                if proxy:
-                    self.proxy_rotator.mark_proxy_failed(proxy)
+                self._handle_proxy_failure(proxy, 'Proxy', e, attempt)
             except requests.exceptions.Timeout as e:
-                print(f"Timeout error: {e}")
-                if proxy:
-                    self.proxy_rotator.mark_proxy_failed(proxy)
+                self._handle_proxy_failure(proxy, 'Timeout', e, attempt)
             except requests.exceptions.RequestException as e:
-                print(f"Request error: {e}")
+                proxy_info = proxy['http'] if proxy else 'No proxy'
+                print(f"Request error on attempt {attempt + 1} with {proxy_info}: {e}")
             except Exception as e:
-                print(f"Unexpected error: {e}")
+                proxy_info = proxy['http'] if proxy else 'No proxy'
+                print(f"Unexpected error on attempt {attempt + 1} with {proxy_info}: {e}")
         
         print(f"Failed to fetch after {self.retry_attempts} attempts: {url}")
         return None
